@@ -7,4 +7,13 @@ export async function getHtml(url: string) {
   return cheerio.load(html);
 }
 
+export const ALLOWED_SERIES_TYPES = [
+  "Tests",
+  "One-Day Internationals",
+  "Twenty20 Internationals",
+  "First-class",
+  "List A",
+  "Twenty20",
+];
+
 export const BASE_URL = "https://www.cricinfo.com";
