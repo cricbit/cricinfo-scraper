@@ -15,7 +15,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "bugs": {
     "url": "https://github.com/cricbit/cricinfo-scraper/issues"
   },
@@ -26,6 +26,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "cheerio": "^1.2.0",
     "express": "^5.2.1"
   }
 }
