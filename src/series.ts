@@ -1,6 +1,7 @@
 import { ALLOWED_SERIES_TYPES, BASE_URL, getHtml } from "./utils.js";
 
-const SERIES_URL = BASE_URL + "/ci/engine/series/index.html?season=";
+const SEASON_URL = BASE_URL + "/ci/engine/series/index.html?season=";
+const SERIES_URL = BASE_URL + "/ci/engine/match/index/series.html?series=";
 
 type Series = {
   id: number;
@@ -11,6 +12,23 @@ type Series = {
   result: string;
   url: string;
 };
+
+type Match = {
+  id: number;
+  matchNum?: number;
+  dates: string;
+  venue?: string;
+  status?: string;
+  team1?: string;
+  team1Score?: string;
+  team2?: string;
+  team2Score?: string;
+  result?: string;
+  scorecardUrl?: string;
+  reportUrl?: string;
+};
+
+const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
 
 function parseDateAndLocation(value: string) {
   const detailsStart = value.lastIndexOf(" (");
@@ -33,7 +51,7 @@ function parseDateAndLocation(value: string) {
 }
 
 export async function getSeriesForSeason(season: string) {
-  const $ = await getHtml(SERIES_URL + season);
+  const $ = await getHtml(SEASON_URL + season);
   const matchSections = $("div.match-section-head");
   const series: Series[] = [];
 
@@ -68,4 +86,71 @@ export async function getSeriesForSeason(season: string) {
   }
 
   return series;
+}
+
+export async function getMatchesForSeries(seriesId: string) {
+  const $ = await getHtml(SERIES_URL + seriesId);
+  const matchBlocks = $("section.default-match-block");
+  const matches: Match[] = [];
+
+  for (const block of matchBlocks) {
+    const matchBlock = $(block);
+    const descriptorLink = matchBlock.find(".match-info .match-no a").first();
+    const descriptor = normalizeText(descriptorLink.text());
+    const descriptorParts = descriptor.match(/^(.+?)\s+at\s+(.+)$/i);
+    const name = descriptorParts?.[1]?.trim() || descriptor;
+    const venue = descriptorParts?.[2]?.trim();
+    const matchNumber = name.match(/^(\d+)(?:st|nd|rd|th)\b/i)?.[1];
+
+    const scorecardHref =
+      matchBlock
+        .find('.match-articles a[href*="/scorecard/"]')
+        .first()
+        .attr("href") ?? descriptorLink.attr("href");
+    const reportHref = matchBlock
+      .find('.match-articles a[href*="/report/"]')
+      .first()
+      .attr("href");
+    const matchId = (scorecardHref ?? reportHref)?.match(
+      /\/(?:scorecard|report)\/(\d+)(?:\/|$)/,
+    )?.[1];
+
+    if (!matchId || !name) {
+      continue;
+    }
+
+    const parseInnings = (selector: string) => {
+      const innings = matchBlock.find(selector).first();
+      const teamOnly = innings.clone();
+      teamOnly.find(".bold").remove();
+
+      return {
+        team: normalizeText(teamOnly.text()),
+      };
+    };
+
+    const firstInnings = parseInnings(".innings-info-1");
+    const secondInnings = parseInnings(".innings-info-2");
+    const dates = normalizeText(
+      matchBlock.find(".match-info > span.bold").first().text(),
+    );
+    const status = matchBlock.attr("data-matchstatus")?.trim();
+    const result = normalizeText(matchBlock.find(".match-status").text());
+
+    matches.push({
+      id: Number(matchId),
+      dates,
+      ...(matchNumber ? { matchNum: Number(matchNumber) } : {}),
+      ...(venue ? { venue } : {}),
+      ...(status ? { status } : {}),
+      ...(firstInnings.team ? { team1: firstInnings.team } : {}),
+      ...(secondInnings.team ? { team2: secondInnings.team } : {}),
+      ...(result ? { result } : {}),
+      ...(scorecardHref
+        ? { scorecardUrl: new URL(scorecardHref, BASE_URL).href }
+        : {}),
+    });
+  }
+
+  return matches;
 }

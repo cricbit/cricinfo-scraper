@@ -1,6 +1,6 @@
 import express from "express";
 import { getAvailableSeasons } from "./seasons.js";
-import { getSeriesForSeason } from "./series.js";
+import { getMatchesForSeries, getSeriesForSeason } from "./series.js";
 const app = express();
 
 app.get("/seasons", async (_, res) => {
@@ -13,14 +13,35 @@ app.get("/seasons", async (_, res) => {
   }
 });
 
-app.get("/series/:season", async (req, res) => {
-  const season = req.params.season;
-  console.log(season);
+app.get("/series", async (req, res) => {
+  const season = req.query.season;
+
+  if (typeof season !== "string" || !season.trim()) {
+    return res.status(400).json({ error: "season is required" });
+  }
+
   try {
     const series = await getSeriesForSeason(season);
     res.json(series);
   } catch (err) {
     res.status(500).json({ error: `Failed to retrieve series for ${season}` });
+  }
+});
+
+app.get("/series/:seriesId/matches", async (req, res) => {
+  const seriesId = req.params.seriesId;
+
+  if (!/^\d+$/.test(seriesId)) {
+    return res.status(400).json({ error: "seriesId must be a number" });
+  }
+
+  try {
+    const matches = await getMatchesForSeries(seriesId);
+    res.json(matches);
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: `Failed to retrieve matches for ${seriesId}` });
   }
 });
 
