@@ -1,33 +1,17 @@
-import { getHtml } from "./utils.js";
+import express from "express";
+import { getAvailableSeasons } from "./seasons.js";
+const app = express();
 
-const BASE_URL = "https://www.cricinfo.com";
-const SEASONS_URL = BASE_URL + "/ci/engine/series/index.html";
-
-type Season = {
-  season: string;
-  seasonUrl: string;
-};
-
-async function getAvailableSeasons() {
-  const $ = await getHtml(SEASONS_URL);
-  const links = $("a[href*='season=']");
-
-  const seasons: Season[] = [];
-
-  for (const link of links) {
-    const season = $(link).text();
-    const href = $(link).attr("href");
-
-    if (href)
-      seasons.push({
-        season,
-        seasonUrl: new URL(href, BASE_URL).href,
-      });
+app.get("/seasons", async (_req, res) => {
+  try {
+    const seasons = await getAvailableSeasons();
+    res.json(seasons);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to retrieve seasons" });
   }
+});
 
-  console.log(seasons);
-
-  return seasons;
-}
-
-await getAvailableSeasons();
+app.listen(8080, () => {
+  console.log(`server started at http://localhost:8080`);
+});

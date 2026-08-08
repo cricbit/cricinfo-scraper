@@ -7,3 +7,4 @@ export async function getHtml(url: string) {
   return cheerio.load(html);
 }
 
+export const BASE_URL = "https://www.cricinfo.com";
