@@ -1,4 +1,5 @@
 import express from "express";
+import { getScorecard } from "./scorecard.js";
 import { getAvailableSeasons } from "./seasons.js";
 import { getMatchesForSeries, getSeriesForSeason } from "./series.js";
 const app = express();
@@ -42,6 +43,35 @@ app.get("/series/:seriesId/matches", async (req, res) => {
     res
       .status(500)
       .json({ error: `Failed to retrieve matches for ${seriesId}` });
+  }
+});
+
+app.get("/scorecard", async (req, res) => {
+  const url = req.query.url;
+
+  if (typeof url !== "string" || !url.trim()) {
+    return res.status(400).json({ error: "url is required" });
+  }
+
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return res.status(400).json({ error: "url must be a valid URL" });
+  }
+
+  if (!/(^|\.)(cricinfo|espncricinfo)\.com$/.test(parsedUrl.hostname)) {
+    return res
+      .status(400)
+      .json({ error: "url must be a cricinfo.com or espncricinfo.com URL" });
+  }
+
+  try {
+    const scorecard = await getScorecard(parsedUrl.href);
+    res.json(scorecard);
+  } catch (err) {
+    res.status(500).json({ error: `Failed to retrieve scorecard for ${url}` });
   }
 });
 
