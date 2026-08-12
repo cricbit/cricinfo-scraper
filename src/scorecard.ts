@@ -16,10 +16,40 @@ type Award = {
   stat: string;
 };
 
+type Player = {
+  name: string;
+  playerId: number | undefined;
+  substitute?: boolean;
+};
+
+type DismissalType =
+  | "not out"
+  | "bowled"
+  | "lbw"
+  | "caught"
+  | "caught and bowled"
+  | "stumped"
+  | "run out"
+  | "hit wicket"
+  | "retired hurt"
+  | "retired not out"
+  | "retired out"
+  | "timed out"
+  | "obstructing the field"
+  | "handled the ball"
+  | "other";
+
+type Dismissal = {
+  text: string;
+  type: DismissalType;
+  bowler?: Player;
+  fielders?: Player[];
+};
+
 type BattingEntry = {
   name: string;
   playerId: number | undefined;
-  dismissal: string;
+  dismissal: Dismissal;
   runs: number;
   balls: number;
   minutes?: number;
@@ -59,12 +89,16 @@ type Innings = {
   bowling: BowlingEntry[];
 };
 
+type RawBattingEntry = Omit<BattingEntry, "dismissal"> & { dismissal: string };
+type RawInnings = Omit<Innings, "batting"> & { batting: RawBattingEntry[] };
+
 type Scorecard = {
   status: string;
   descriptor: string;
   teams: TeamScore[];
   result: string;
   awards: Award[];
+  players: Player[];
   innings: Innings[];
 };
 
@@ -75,12 +109,123 @@ const idFromHref = (href?: string) => {
   return id ? Number(id) : undefined;
 };
 
+const stripKeeperMark = (name: string) => name.replace(/^†\s*/, "").trim();
+
+const parseSubstitute = (name: string) => {
+  const match = name.match(/^sub\s*[([]([^)\]]+)[)\]]$/i);
+  return match
+    ? { name: match[1]!.trim(), substitute: true }
+    : { name, substitute: false };
+};
+
+type PlayerIndex = {
+  byName: Map<string, number | undefined>;
+  bySurname: Map<string, number | undefined>;
+};
+
+function buildPlayerIndex(roster: { name: string; playerId: number | undefined }[]): PlayerIndex {
+  const byName = new Map<string, number | undefined>();
+  const surnameCounts = new Map<string, number>();
+  const bySurname = new Map<string, number | undefined>();
+
+  for (const { name, playerId } of roster) {
+    byName.set(name, playerId);
+    const surname = name.split(/\s+/).pop() ?? name;
+    surnameCounts.set(surname, (surnameCounts.get(surname) ?? 0) + 1);
+    bySurname.set(surname, playerId);
+  }
+
+  for (const [surname, count] of surnameCounts) {
+    if (count > 1) bySurname.delete(surname);
+  }
+
+  return { byName, bySurname };
+}
+
+function resolvePlayer(rawName: string, index: PlayerIndex): Player {
+  const { name: subName, substitute } = parseSubstitute(
+    stripKeeperMark(rawName),
+  );
+  const name = stripKeeperMark(subName);
+  const playerId = index.byName.get(name) ?? index.bySurname.get(name);
+
+  return substitute ? { name, playerId, substitute: true } : { name, playerId };
+}
+
+const SIMPLE_DISMISSALS: Record<string, DismissalType> = {
+  "not out": "not out",
+  "retired hurt": "retired hurt",
+  "retired not out": "retired not out",
+  "retired out": "retired out",
+  "timed out": "timed out",
+  "obstructing the field": "obstructing the field",
+  "handled the ball": "handled the ball",
+};
+
+function parseDismissal(raw: string, index: PlayerIndex): Dismissal {
+  const text = raw;
+  const simple = SIMPLE_DISMISSALS[raw.toLowerCase()];
+
+  if (simple) return { text, type: simple };
+
+  let match: RegExpMatchArray | null;
+
+  if ((match = raw.match(/^run\s*out\s*\(([^)]+)\)$/i))) {
+    const fielders = match[1]!
+      .split("/")
+      .map((name) => resolvePlayer(name, index));
+    return { text, type: "run out", fielders };
+  }
+
+  if ((match = raw.match(/^st\s+(.+?)\s+b\s+(.+)$/i))) {
+    return {
+      text,
+      type: "stumped",
+      fielders: [resolvePlayer(match[1]!, index)],
+      bowler: resolvePlayer(match[2]!, index),
+    };
+  }
+
+  if ((match = raw.match(/^c\s*(?:&|and)\s*b\s+(.+)$/i))) {
+    const bowler = resolvePlayer(match[1]!, index);
+    return { text, type: "caught and bowled", fielders: [bowler], bowler };
+  }
+
+  if ((match = raw.match(/^c\s+(.+?)\s+b\s+(.+)$/i))) {
+    return {
+      text,
+      type: "caught",
+      fielders: [resolvePlayer(match[1]!, index)],
+      bowler: resolvePlayer(match[2]!, index),
+    };
+  }
+
+  if ((match = raw.match(/^lbw\s+b\s+(.+)$/i))) {
+    return { text, type: "lbw", bowler: resolvePlayer(match[1]!, index) };
+  }
+
+  if ((match = raw.match(/^hit\s+wicket\s+b\s+(.+)$/i))) {
+    return {
+      text,
+      type: "hit wicket",
+      bowler: resolvePlayer(match[1]!, index),
+    };
+  }
+
+  if ((match = raw.match(/^b\s+(.+)$/i))) {
+    return { text, type: "bowled", bowler: resolvePlayer(match[1]!, index) };
+  }
+
+  return { text, type: "other" };
+}
+
 export async function getScorecard(url: string): Promise<Scorecard> {
   const $ = await getHtml(url);
 
-  const header = $("div.ds-mb-5")
+  const statusBlock = $("div.ds-mb-5")
     .filter((_, el) => $(el).find("span.ds-text-overline-1").length > 0)
     .first();
+  const header = statusBlock.parent();
 
   const status = normalizeText(
     header.find("span.ds-text-overline-1").first().text(),
@@ -153,7 +298,7 @@ export async function getScorecard(url: string): Promise<Scorecard> {
     .get()
     .filter((award) => award.player);
 
-  const innings: Innings[] = $("div.ds-mb-4.ds-border-t")
+  const rawInnings: RawInnings[] = $("div.ds-mb-4.ds-border-t")
     .filter((_, el) => $(el).find("div.ds-bg-color-primary-bg").length > 0)
     .map((_, block) => {
       const inningsBlock = $(block);
@@ -165,7 +310,7 @@ export async function getScorecard(url: string): Promise<Scorecard> {
       const battingTable = tables.eq(0);
       const bowlingTable = tables.eq(1);
 
-      const batting: BattingEntry[] = [];
+      const batting: RawBattingEntry[] = [];
       const fallOfWickets: FallOfWicket[] = [];
       let extras: string | undefined;
       let extrasRuns: number | undefined;
@@ -263,7 +408,7 @@ export async function getScorecard(url: string): Promise<Scorecard> {
         });
       });
 
-      const inningsResult: Innings = {
+      const inningsResult: RawInnings = {
         team,
         label,
         batting,
@@ -280,12 +425,36 @@ export async function getScorecard(url: string): Promise<Scorecard> {
     })
     .get();
 
+  const roster = new Map<string, number | undefined>();
+
+  for (const inn of rawInnings) {
+    for (const player of [...inn.batting, ...inn.bowling]) {
+      roster.set(player.name, player.playerId);
+    }
+  }
+
+  const players: Player[] = Array.from(roster, ([name, playerId]) => ({
+    name,
+    playerId,
+  }));
+
+  const playerIndex = buildPlayerIndex(players);
+
+  const innings: Innings[] = rawInnings.map((inn) => ({
+    ...inn,
+    batting: inn.batting.map((entry) => ({
+      ...entry,
+      dismissal: parseDismissal(entry.dismissal, playerIndex),
+    })),
+  }));
+
   return {
     status,
     descriptor,
     teams,
     result,
     awards,
+    players,
     innings,
   };
 }

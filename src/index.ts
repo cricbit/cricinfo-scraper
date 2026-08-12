@@ -75,6 +75,10 @@ app.get("/scorecard", async (req, res) => {
   }
 });
 
+app.get("/health", async (_req, res) => {
+  return res.status(200).json({ message: "API healthy" });
+});
+
 app.listen(8080, () => {
   console.log(`server started at http://localhost:8080`);
 });
